@@ -10,7 +10,31 @@ use std::time::Duration;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
-use crate::common;
+use crate::{common, fl};
+
+/// Convert greetd error descriptions to user-friendly localized messages
+fn greetd_error_to_message(error_type: greetd_ipc::ErrorType, description: &str) -> String {
+    use greetd_ipc::ErrorType;
+
+    match error_type {
+        ErrorType::AuthError => {
+            // For authentication errors, check description for specific error types
+            if description.contains("PERM_DENIED") {
+                fl!("auth-error-denied")
+            } else if description.contains("MAXTRIES") {
+                fl!("auth-error-maxtries")
+            } else if description.contains("ACCT_EXPIRED") || description.contains("USER_UNKNOWN") {
+                fl!("auth-error-account")
+            } else {
+                fl!("auth-error-credentials")
+            }
+        }
+        ErrorType::Error => {
+            // For generic errors, show a generic message
+            fl!("auth-error-default")
+        }
+    }
+}
 
 pub fn subscription() -> Subscription<Message> {
     struct GreetdSubscription;
@@ -77,9 +101,7 @@ pub fn subscription() -> Subscription<Message> {
                                             )
                                             .await;
                                     }
-                                    //TODO: treat error type differently?
-                                    greetd_ipc::AuthMessageType::Info
-                                    | greetd_ipc::AuthMessageType::Error => {
+                                    greetd_ipc::AuthMessageType::Info => {
                                         _ = sender
                                             .send(
                                                 common::Message::Prompt(auth_message, false, None)
@@ -87,12 +109,14 @@ pub fn subscription() -> Subscription<Message> {
                                             )
                                             .await;
                                     }
+                                    greetd_ipc::AuthMessageType::Error => {
+                                        _ = sender.send(Message::Error(auth_message)).await;
+                                    }
                                 },
                                 greetd_ipc::Response::Error {
-                                    error_type: _,
+                                    error_type,
                                     description,
                                 } => {
-                                    //TODO: use error_type?
                                     match request {
                                         greetd_ipc::Request::CancelSession => {
                                             // Do not send errors for cancel session to gui
@@ -105,7 +129,12 @@ pub fn subscription() -> Subscription<Message> {
                                             break;
                                         }
                                         _ => {
-                                            _ = sender.send(Message::Error(description)).await;
+                                            _ = sender
+                                                .send(Message::Error(greetd_error_to_message(
+                                                    error_type,
+                                                    &description,
+                                                )))
+                                                .await;
                                         }
                                     }
                                 }

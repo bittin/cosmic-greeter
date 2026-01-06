@@ -49,7 +49,9 @@ cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settin
     "greeter",
 ] }
 cctk = { git = "https://github.com/pop-os/cosmic-protocols", package = "cosmic-client-toolkit" }
-cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default-features = false, features = ["client"] }
+cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default-features = false, features = [
+    "client",
+] }
 
 # For network status using networkmanager feature
 cosmic-dbus-networkmanager = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
@@ -60,7 +62,7 @@ nix = { workspace = true, optional = true }
 # For power status with upower feature
 upower_dbus = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # Required for some features
-zbus = { workspace = true, optional = true }
+zbus = { workspace = true }
 # CLI arguments
 clap_lex = "0.7"
 # Internationalization
@@ -75,6 +77,13 @@ timedate-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
 cosmic-randr-shell = { workspace = true }
 kdl.workspace = true
 color-eyre.workspace = true
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "rayon",
+    "webp",
+    "hdr",
+] }
 
 [dependencies.greetd_ipc]
 version = "0.10.3"
@@ -82,12 +91,10 @@ features = ["tokio-codec"]
 
 [features]
 default = ["logind", "networkmanager", "upower", "systemd"]
-logind = ["logind-zbus", "zbus", "systemd"]
+logind = ["logind-zbus", "systemd"]
 systemd = ["tracing-journald"]
-networkmanager = ["cosmic-dbus-networkmanager", "zbus"]
-upower = ["upower_dbus", "zbus"]
-zbus = ["dep:zbus", "nix"]
-
+networkmanager = ["cosmic-dbus-networkmanager"]
+upower = ["upower_dbus"]
 
 [profile.dev.package.tiny-skia]
 opt-level = 2
