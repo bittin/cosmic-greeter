@@ -1,6 +1,6 @@
-accessibility = Pritaikymas neįgaliesiems
+accessibility = Prieinamumas
     .screen-reader = Ekrano Skaitytuvas
-    .magnifier = Padidinimo stiklas
+    .magnifier = Didinamasis stiklas
     .high-contrast = Didelis kontrastas
     .invert-colors = Spalvų Invertavimas
 cancel = Atšaukti
@@ -32,3 +32,4 @@ auth-error-denied = Prieiga uždrausta.
 auth-error-maxtries = Per daug nesėkmingų autentifikavimo bandymų.
 auth-error-account = Paskyra yra neprieinama arba išjungta.
 shutdown-now = Išjungti įrenginį dabar?
+suspend = Miego režimas
