@@ -1,16 +1,15 @@
 use cosmic_comp_config::output::randr;
 use cosmic_config::CosmicConfigEntry;
 use kdl::KdlDocument;
-use std::{
-    collections::BTreeMap,
-    fs,
-    io::Read,
-    os::unix::fs::OpenOptionsExt,
-    path::{Path, PathBuf},
-};
+use std::collections::BTreeMap;
+use std::fs;
+use std::io::Read;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
 
 pub use cosmic_applets_config::time::TimeAppletConfig;
-pub use cosmic_bg_config::{Color, Source as BgSource, state::State as BgState};
+pub use cosmic_bg_config::state::State as BgState;
+pub use cosmic_bg_config::{Color, Source as BgSource};
 pub use cosmic_comp_config::{CosmicCompConfig, XkbConfig, ZoomConfig};
 pub use cosmic_theme::{Theme, ThemeBuilder};
 
@@ -19,8 +18,8 @@ pub struct UserFilter {
     uid_max: u32,
 }
 
-impl UserFilter {
-    pub fn new() -> Self {
+impl Default for UserFilter {
+    fn default() -> Self {
         let login_defs_data = fs::read_to_string("/etc/login.defs").unwrap_or_default();
         let login_defs = whitespace_conf::parse(&login_defs_data);
         Self {
@@ -33,6 +32,12 @@ impl UserFilter {
                 .and_then(|x| x.parse::<u32>().ok())
                 .unwrap_or(65000),
         }
+    }
+}
+
+impl UserFilter {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn filter(&self, user: &pwd::Passwd) -> bool {
@@ -80,22 +85,18 @@ impl UserData {
                 })
         });
         for (_, source) in self.bg_state.wallpapers.iter() {
-            match source {
-                //TODO: do not reread duplicate paths, cache data by path?
-                BgSource::Path(path) => {
-                    if !self.bg_path_data.contains_key(path) {
-                        match fs::read(path) {
-                            Ok(bytes) => {
-                                self.bg_path_data.insert(path.clone(), bytes);
-                            }
-                            Err(err) => {
-                                tracing::error!("failed to read wallpaper {:?}: {:?}", path, err);
-                            }
-                        }
+            //TODO: do not reread duplicate paths, cache data by path?
+            if let BgSource::Path(path) = source
+                && !self.bg_path_data.contains_key(path)
+            {
+                match fs::read(path) {
+                    Ok(bytes) => {
+                        self.bg_path_data.insert(path.clone(), bytes);
+                    }
+                    Err(err) => {
+                        tracing::error!("failed to read wallpaper {:?}: {:?}", path, err);
                     }
                 }
-                // Other types not supported
-                _ => {}
             }
         }
     }

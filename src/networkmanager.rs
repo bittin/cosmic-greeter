@@ -1,9 +1,11 @@
-use cosmic::iced::{
-    Subscription,
-    futures::{SinkExt, StreamExt, channel::mpsc},
-};
-use cosmic_dbus_networkmanager::{device::SpecificDevice, nm::NetworkManager};
-use std::{any::TypeId, cmp, time::Duration};
+use cosmic::iced::Subscription;
+use cosmic::iced::futures::channel::mpsc;
+use cosmic::iced::futures::{SinkExt, StreamExt};
+use cosmic_dbus_networkmanager::device::SpecificDevice;
+use cosmic_dbus_networkmanager::nm::NetworkManager;
+use std::any::TypeId;
+use std::cmp;
+use std::time::Duration;
 use zbus::{Connection, Result};
 
 #[derive(Clone, Copy, Debug)]
@@ -77,16 +79,16 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<&'static str>>) -> Result<
                         };
                     }
                     Some(SpecificDevice::Wireless(wireless)) => {
-                        if let Ok(ap) = wireless.active_access_point().await {
-                            if let Ok(strength) = ap.strength().await {
-                                // Wireless always overrides with the highest strength
-                                icon = match icon {
-                                    NetworkIcon::Wireless(other_strength) => {
-                                        NetworkIcon::Wireless(cmp::max(strength, other_strength))
-                                    }
-                                    _ => NetworkIcon::Wireless(strength),
-                                };
-                            }
+                        if let Ok(ap) = wireless.active_access_point().await
+                            && let Ok(strength) = ap.strength().await
+                        {
+                            // Wireless always overrides with the highest strength
+                            icon = match icon {
+                                NetworkIcon::Wireless(other_strength) => {
+                                    NetworkIcon::Wireless(cmp::max(strength, other_strength))
+                                }
+                                _ => NetworkIcon::Wireless(strength),
+                            };
                         }
                     }
                     _ => {}

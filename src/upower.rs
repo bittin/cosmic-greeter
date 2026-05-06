@@ -1,10 +1,9 @@
-use cosmic::iced::{
-    Subscription,
-    futures::{SinkExt, StreamExt, channel::mpsc},
-    stream,
-};
+use cosmic::iced::futures::channel::mpsc;
+use cosmic::iced::futures::{SinkExt, StreamExt};
+use cosmic::iced::{Subscription, stream};
 use futures_util::select;
-use std::{any::TypeId, time::Duration};
+use std::any::TypeId;
+use std::time::Duration;
 use upower_dbus::{BatteryState, BatteryType, UPowerProxy};
 use zbus::{Connection, Result};
 
@@ -52,26 +51,26 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<(f64, bool, bool)>>) -> Re
     loop {
         let mut info_opt = None;
 
-        if let Ok(mut percent) = dev.percentage().await {
-            if let Ok(state) = dev.state().await {
-                let threshold_enabled = dev.charge_threshold_enabled().await.unwrap_or_default();
-                let mut capacity = dev.capacity().await.unwrap_or(100.);
-                if capacity <= 1. {
-                    capacity = 100.;
-                }
-
-                // compensate for declining battery capacity
-                percent = percent * 100. / capacity;
-                if matches!(state, BatteryState::FullyCharged) || percent >= 100. {
-                    percent = 100.;
-                }
-
-                info_opt = Some((
-                    percent,
-                    state == BatteryState::Discharging,
-                    threshold_enabled,
-                ));
+        if let Ok(mut percent) = dev.percentage().await
+            && let Ok(state) = dev.state().await
+        {
+            let threshold_enabled = dev.charge_threshold_enabled().await.unwrap_or_default();
+            let mut capacity = dev.capacity().await.unwrap_or(100.);
+            if capacity <= 1. {
+                capacity = 100.;
             }
+
+            // compensate for declining battery capacity
+            percent = percent * 100. / capacity;
+            if matches!(state, BatteryState::FullyCharged) || percent >= 100. {
+                percent = 100.;
+            }
+
+            info_opt = Some((
+                percent,
+                state == BatteryState::Discharging,
+                threshold_enabled,
+            ));
         }
 
         msg_tx.send(info_opt).await.unwrap();

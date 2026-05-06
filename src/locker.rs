@@ -4,45 +4,37 @@
 use color_eyre::eyre::WrapErr;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
-use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
-use cosmic::iced::{Point, Rectangle, Size};
-use cosmic::surface;
-use cosmic::{
-    Element, executor,
-    iced::runtime::core::window::Id as SurfaceId,
-    iced::{
-        self, Alignment, Background, Border, Length, Subscription,
-        event::wayland::{OutputEvent, SessionLockEvent},
-        futures::{self, SinkExt},
-        platform_specific::shell::wayland::commands::session_lock::{
-            destroy_lock_surface, get_lock_surface, lock, unlock,
-        },
-    },
-    theme, widget,
+use cosmic::iced::event::wayland::{OutputEvent, SessionLockEvent};
+use cosmic::iced::futures::{self, SinkExt};
+use cosmic::iced::platform_specific::shell::wayland::commands::session_lock::{
+    destroy_lock_surface, get_lock_surface, lock, unlock,
 };
+use cosmic::iced::runtime::core::window::Id as SurfaceId;
+use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
+use cosmic::iced::{
+    self, Alignment, Background, Border, Length, Point, Rectangle, Size, Subscription,
+};
+use cosmic::{Element, executor, surface, theme, widget};
 use cosmic_config::CosmicConfigEntry;
 use cosmic_greeter_daemon::{TimeAppletConfig, UserData};
+use std::any::TypeId;
+use std::ffi::{CStr, CString};
+use std::os::fd::OwnedFd;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
-use std::{
-    any::TypeId,
-    env,
-    ffi::{CStr, CString},
-    fs,
-    os::fd::OwnedFd,
-    path::PathBuf,
-    process,
-    sync::Arc,
-};
-use tokio::{sync::mpsc, task};
+use std::{env, fs, process};
+use tokio::sync::mpsc;
+use tokio::task;
 use tracing::level_filters::LevelFilter;
 use tracing::warn;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use wayland_client::{Proxy, protocol::wl_output::WlOutput};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{EnvFilter, fmt};
+use wayland_client::Proxy;
+use wayland_client::protocol::wl_output::WlOutput;
 
-use crate::{
-    common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT},
-    fl,
-};
+use crate::common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT};
+use crate::fl;
 
 fn lockfile_opt() -> Option<PathBuf> {
     let runtime_dir = dirs::runtime_dir()?;
@@ -325,7 +317,7 @@ pub struct App {
 }
 
 impl App {
-    fn menu(&self, surface_id: SurfaceId) -> Element<Message> {
+    fn menu(&self, surface_id: SurfaceId) -> Element<'_, Message> {
         let window_width = self
             .common
             .window_size
@@ -1132,10 +1124,10 @@ impl cosmic::Application for App {
                     }
                     self.spinner_rotation = 0.0;
                     // Try to create lockfile when locking
-                    if let Some(ref lockfile) = self.flags.lockfile_opt {
-                        if let Err(err) = fs::File::create(lockfile) {
-                            tracing::warn!("failed to create lockfile {:?}: {}", lockfile, err);
-                        }
+                    if let Some(ref lockfile) = self.flags.lockfile_opt
+                        && let Err(err) = fs::File::create(lockfile)
+                    {
+                        tracing::warn!("failed to create lockfile {:?}: {}", lockfile, err);
                     }
                     // Tell compositor to lock
                     return lock();
@@ -1165,10 +1157,10 @@ impl cosmic::Application for App {
                         }
                         self.spinner_rotation = 0.0;
                         // Try to delete lockfile when unlocking
-                        if let Some(ref lockfile) = self.flags.lockfile_opt {
-                            if let Err(err) = fs::remove_file(lockfile) {
-                                tracing::warn!("failed to remove lockfile {:?}: {}", lockfile, err);
-                            }
+                        if let Some(ref lockfile) = self.flags.lockfile_opt
+                            && let Err(err) = fs::remove_file(lockfile)
+                        {
+                            tracing::warn!("failed to remove lockfile {:?}: {}", lockfile, err);
                         }
 
                         // Destroy lock surfaces
@@ -1204,12 +1196,12 @@ impl cosmic::Application for App {
     }
 
     // Not used for layer surface window
-    fn view(&self) -> Element<Self::Message> {
+    fn view(&self) -> Element<'_, Self::Message> {
         unimplemented!()
     }
 
     /// Creates a view after each update.
-    fn view_window(&self, surface_id: SurfaceId) -> Element<Self::Message> {
+    fn view_window(&self, surface_id: SurfaceId) -> Element<'_, Self::Message> {
         let img = self
             .common
             .surface_images
