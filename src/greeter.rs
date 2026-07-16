@@ -24,7 +24,8 @@ use cosmic::iced::platform_specific::shell::wayland::commands::subsurface::repos
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::iced::{
-    self, Alignment, Background, Border, Length, Point, Size, Subscription, window,
+    self, Alignment, Background, Border, Color, Length, Point, Rectangle, Size, Subscription,
+    window,
 };
 use cosmic::widget::{id_container, text};
 use cosmic::{Element, executor, surface, theme, widget};
@@ -537,7 +538,7 @@ impl App {
             let dropdown_menu = |items: Vec<_>| {
                 let item_cnt = items.len();
 
-                let items = widget::column::with_children(items);
+                let items = widget::menu::menu_column::MenuColumn::with_children(items);
                 let items = if item_cnt > 7 {
                     Element::from(
                         widget::scrollable(items)
@@ -547,12 +548,12 @@ impl App {
                     Element::from(items)
                 };
 
-                widget::container(items)
+                let menu = widget::container(items)
                     .padding(1)
                     //TODO: move style to libcosmic
                     .class(theme::Container::custom(|theme| {
                         let cosmic = theme.cosmic();
-                        let component = &cosmic.background.component;
+                        let component = &cosmic.background(theme.transparent).component;
                         widget::container::Style {
                             icon_color: Some(component.on.into()),
                             text_color: Some(component.on.into()),
@@ -565,7 +566,13 @@ impl App {
                             ..Default::default()
                         }
                     }))
-                    .width(Length::Fixed(240.0))
+                    .width(Length::Fixed(240.0));
+
+                if let Some(t) = self.common.rectangle_tracker.as_ref() {
+                    Element::from(t.container((id, true), menu))
+                } else {
+                    menu.into()
+                }
             };
 
             let mut input_button = widget::popover(
@@ -928,29 +935,37 @@ impl App {
                 },
             )
         };
+
+        let menu = widget::layer_container(
+            iced::widget::row![left_element, right_element].align_y(Alignment::Start),
+        )
+        .layer(cosmic::cosmic_theme::Layer::Background)
+        .padding(16)
+        .class(cosmic::theme::Container::Custom(Box::new(
+            |theme: &cosmic::Theme| {
+                // Use background appearance as the base
+                let mut appearance =
+                    widget::container::Catalog::style(theme, &cosmic::theme::Container::Background);
+                appearance.background = Some(iced::Background::Color(
+                    // TODO if we can use popups instead of subsurfaces for the greeter and the lockscreen
+                    // then we can allow transparency
+                    theme.cosmic().background(theme.transparent).base.into(),
+                ));
+                appearance.border = iced::Border::default().rounded(16);
+                appearance
+            },
+        )))
+        .width(Length::Fixed(800.0));
+        let menu = if let Some(t) = self.common.rectangle_tracker.as_ref() {
+            Element::from(t.container((id, false), menu))
+        } else {
+            menu.into()
+        };
         let menu = widget::container(widget::column::with_children(vec![
             widget::space::vertical()
                 .height(Length::FillPortion(1))
                 .into(),
-            widget::layer_container(
-                iced::widget::row![left_element, right_element].align_y(Alignment::Start),
-            )
-            .layer(cosmic::cosmic_theme::Layer::Background)
-            .padding(16)
-            .class(cosmic::theme::Container::Custom(Box::new(
-                |theme: &cosmic::Theme| {
-                    // Use background appearance as the base
-                    let mut appearance = widget::container::Catalog::style(
-                        theme,
-                        &cosmic::theme::Container::Background,
-                    );
-                    appearance.border = iced::Border::default().rounded(16);
-                    appearance
-                },
-            )))
-            .class(cosmic::theme::Container::Background)
-            .width(Length::Fixed(800.0))
-            .into(),
+            menu,
             widget::space::vertical()
                 .height(Length::FillPortion(4))
                 .into(),
@@ -959,6 +974,7 @@ impl App {
         .height(Length::Fill)
         .align_x(Alignment::Center);
 
+        // TODO make these opaque?
         let popover = widget::popover(menu).modal(true);
         match self.dialog_page_opt {
             Some(DialogPage::Restart(instant)) => {
@@ -1090,7 +1106,8 @@ impl cosmic::Application for App {
     }
 
     /// Creates the application, and optionally emits command on initialize.
-    fn init(core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
+    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
+        core.set_app_type(cosmic::core::AppType::System);
         let mut tasks = Vec::new();
         let (mut common, common_task) = Common::init(core);
         common.on_output_event = Some(Box::new(|output_event, output| {
@@ -1251,7 +1268,12 @@ impl cosmic::Application for App {
                             surface_id,
                             Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
                         );
-
+                        self.common
+                            .subsurface_rects
+                            .insert(output.clone(), Rectangle::new(loc, sub_size));
+                        self.common
+                            .subsurface_outputs
+                            .insert(subsurface_id, output.clone());
                         let msg = cosmic::surface::action::subsurface(
                             move |_: &mut App| SctkSubsurfaceSettings {
                                 parent: surface_id,
@@ -1330,6 +1352,7 @@ impl cosmic::Application for App {
                 self.selected_session = selected_session;
                 if self.dropdown_opt == Some(Dropdown::Session) {
                     self.dropdown_opt = None;
+                    return self.common.dropdown_blur_rects(false);
                 }
             }
             Message::EnterUser(focus_input, username) => {
@@ -1346,7 +1369,10 @@ impl cosmic::Application for App {
                     username,
                 };
                 if focus_input {
-                    return widget::text_input::focus(USERNAME_ID.clone());
+                    return Task::batch([
+                        self.common.dropdown_blur_rects(false),
+                        widget::text_input::focus(USERNAME_ID.clone()),
+                    ]);
                 }
             }
             Message::Username(username) => {
@@ -1384,9 +1410,12 @@ impl cosmic::Application for App {
                         self.send_request(Request::CancelSession);
                     }
                     if let Some(randr_list) = self.randr_list.as_ref() {
-                        return self.update(Message::RandrUpdate {
-                            randr: Arc::new(Ok(randr_list.clone())),
-                        });
+                        return Task::batch([
+                            self.common.dropdown_blur_rects(false),
+                            self.update(Message::RandrUpdate {
+                                randr: Arc::new(Ok(randr_list.clone())),
+                            }),
+                        ]);
                     }
                 }
             }
@@ -1498,6 +1527,9 @@ impl cosmic::Application for App {
                 if let Some(handle) = self.heartbeat_handle.take() {
                     handle.abort();
                 }
+                if self.dropdown_opt.is_some() {
+                    return self.common.dropdown_blur_rects(true);
+                }
             }
             Message::DialogConfirm => match self.dialog_page_opt.take() {
                 Some(DialogPage::Restart(_)) => {
@@ -1524,13 +1556,19 @@ impl cosmic::Application for App {
                     })
                     .discard();
                 }
-                None => {}
+                None => {
+                    if self.dropdown_opt.is_some() {
+                        return self.common.dropdown_blur_rects(true);
+                    }
+                }
             },
             Message::DropdownToggle(dropdown) => {
                 if self.dropdown_opt == Some(dropdown) {
                     self.dropdown_opt = None;
+                    return self.common.dropdown_blur_rects(false);
                 } else {
                     self.dropdown_opt = Some(dropdown);
+                    return self.common.dropdown_blur_rects(true);
                 }
             }
             Message::KeyboardLayout(layout_i) => {
@@ -1583,7 +1621,8 @@ impl cosmic::Application for App {
                     .abortable();
 
                     self.heartbeat_handle = Some(handle);
-                    return heartbeat;
+                    self.common.include_menu = false;
+                    return Task::batch(vec![self.common.dropdown_blur_rects(false), heartbeat]);
                 }
             }
             Message::Heartbeat => match self.dialog_page_opt {

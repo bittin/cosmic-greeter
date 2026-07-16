@@ -372,7 +372,7 @@ impl App {
             let dropdown_menu = |items: Vec<_>| {
                 let item_cnt = items.len();
 
-                let items = widget::column::with_children(items);
+                let items = widget::menu::menu_column::MenuColumn::with_children(items);
                 let items = if item_cnt > 7 {
                     Element::from(
                         widget::scrollable(items)
@@ -382,25 +382,32 @@ impl App {
                     Element::from(items)
                 };
 
-                widget::container(items)
-                    .padding(1)
-                    //TODO: move style to libcosmic
-                    .class(theme::Container::custom(|theme| {
-                        let cosmic = theme.cosmic();
-                        let component = &cosmic.background.component;
-                        widget::container::Style {
-                            icon_color: Some(component.on.into()),
-                            text_color: Some(component.on.into()),
-                            background: Some(Background::Color(component.base.into())),
-                            border: Border {
-                                radius: 8.0.into(),
-                                width: 1.0,
-                                color: component.divider.into(),
-                            },
-                            ..Default::default()
-                        }
-                    }))
-                    .width(Length::Fixed(240.0))
+                let menu: widget::Container<'_, Message, cosmic::prelude::Theme> =
+                    widget::container(items)
+                        .padding(1)
+                        //TODO: move style to libcosmic
+                        .class(theme::Container::custom(|theme| {
+                            let cosmic = theme.cosmic();
+                            let component = &cosmic.background(theme.transparent).component;
+                            widget::container::Style {
+                                icon_color: Some(component.on.into()),
+                                text_color: Some(component.on.into()),
+                                background: Some(Background::Color(component.base.into())),
+                                border: Border {
+                                    radius: 8.0.into(),
+                                    width: 1.0,
+                                    color: component.divider.into(),
+                                },
+                                ..Default::default()
+                            }
+                        }))
+                        .width(Length::Fixed(240.0));
+
+                if let Some(t) = self.common.rectangle_tracker.as_ref() {
+                    Element::from(t.container((surface_id, true), menu))
+                } else {
+                    menu.into()
+                }
             };
 
             let mut input_button = widget::popover(
@@ -585,30 +592,34 @@ impl App {
                 .align_x(Alignment::Center)
                 .width(Length::Fill)
         };
-
+        let menu = widget::layer_container(
+            iced::widget::row![left_element, right_element].align_y(Alignment::Start),
+        )
+        .layer(cosmic::cosmic_theme::Layer::Background)
+        .padding(16)
+        .class(cosmic::theme::Container::Custom(Box::new(
+            |theme: &cosmic::Theme| {
+                // Use background appearance as the base
+                let mut appearance =
+                    widget::container::Catalog::style(theme, &cosmic::theme::Container::Background);
+                let c: iced::Color = theme.cosmic().background(theme.transparent).base.into();
+                appearance.background = Some(iced::Background::Color(c));
+                appearance.border = iced::Border::default().rounded(16.0);
+                appearance
+            },
+        )))
+        .width(Length::Fill)
+        .height(Length::Shrink);
+        let menu = if let Some(t) = self.common.rectangle_tracker.as_ref() {
+            Element::from(t.container((surface_id, false), menu))
+        } else {
+            menu.into()
+        };
         widget::container(widget::column::with_children(vec![
             widget::space::vertical()
                 .height(Length::FillPortion(1))
                 .into(),
-            widget::layer_container(
-                iced::widget::row![left_element, right_element].align_y(Alignment::Start),
-            )
-            .layer(cosmic::cosmic_theme::Layer::Background)
-            .padding(16)
-            .class(cosmic::theme::Container::Custom(Box::new(
-                |theme: &cosmic::Theme| {
-                    // Use background appearance as the base
-                    let mut appearance = widget::container::Catalog::style(
-                        theme,
-                        &cosmic::theme::Container::Background,
-                    );
-                    appearance.border = iced::Border::default().rounded(16.0);
-                    appearance
-                },
-            )))
-            .width(Length::Fill)
-            .height(Length::Shrink)
-            .into(),
+            menu,
             widget::space::vertical()
                 .height(Length::FillPortion(4))
                 .into(),
@@ -644,7 +655,8 @@ impl cosmic::Application for App {
     }
 
     /// Creates the application, and optionally emits command on initialize.
-    fn init(core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
+    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
+        core.set_app_type(cosmic::core::AppType::System);
         let (mut common, common_task) = Common::init(core);
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
@@ -713,6 +725,10 @@ impl cosmic::Application for App {
                             );
                             return Task::none();
                         }
+
+                        self.common
+                            .subsurface_outputs
+                            .insert(subsurface_id, output.clone());
 
                         let size = if let Some((w, h)) =
                             output_info_opt.as_ref().and_then(|info| info.logical_size)
@@ -791,11 +807,11 @@ impl cosmic::Application for App {
                         );
 
                         if matches!(self.state, State::Locked { .. }) {
-                            return Task::batch([get_lock_surface(surface_id, output).chain({
+                            return get_lock_surface(surface_id, output).chain({
                                 cosmic::task::message(cosmic::Action::Cosmic(
                                     cosmic::app::Action::Surface(msg),
                                 ))
-                            })]);
+                            });
                         }
                     }
                     OutputEvent::Removed => {
@@ -945,11 +961,15 @@ impl cosmic::Application for App {
                             .zip(self.common.output_names.get(output))
                         {
                             let subsurface_id = SurfaceId::unique();
+                            self.common
+                                .subsurface_outputs
+                                .insert(subsurface_id, output.clone());
                             let surface_id = *surface_id;
                             self.common.surface_names.insert(surface_id, name.clone());
                             self.common
                                 .surface_names
                                 .insert(subsurface_id, name.clone());
+
                             let msg = cosmic::surface::action::subsurface(
                                 move |_: &mut App| SctkSubsurfaceSettings {
                                     parent: surface_id,
@@ -970,7 +990,7 @@ impl cosmic::Application for App {
                                 cosmic::app::Action::Surface(msg),
                             )));
                         } else {
-                            tracing::error!("no rectangle for subsurface...");
+                            tracing::error!("no rectangle for subsurface creation...");
                         }
                     }
                     return Task::batch(commands);
@@ -1009,8 +1029,10 @@ impl cosmic::Application for App {
             Message::DropdownToggle(dropdown) => {
                 if self.dropdown_opt == Some(dropdown) {
                     self.dropdown_opt = None;
+                    return self.common.dropdown_blur_rects(false);
                 } else {
                     self.dropdown_opt = Some(dropdown);
+                    return self.common.dropdown_blur_rects(true);
                 }
             }
             Message::Inhibit(inhibit) => match self.state {
@@ -1027,7 +1049,8 @@ impl cosmic::Application for App {
                     self.common.set_xkb_config(&self.flags.user_data);
                 }
                 if self.dropdown_opt == Some(Dropdown::Keyboard) {
-                    self.dropdown_opt = None
+                    self.dropdown_opt = None;
+                    return self.common.dropdown_blur_rects(false);
                 }
             }
             Message::Submit(value) => {
