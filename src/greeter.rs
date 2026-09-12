@@ -24,8 +24,7 @@ use cosmic::iced::platform_specific::shell::wayland::commands::subsurface::repos
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::iced::{
-    self, Alignment, Background, Border, Color, Length, Point, Rectangle, Size, Subscription,
-    window,
+    self, Alignment, Background, Border, Length, Point, Rectangle, Size, Subscription, window,
 };
 use cosmic::widget::{id_container, text};
 use cosmic::{Element, executor, surface, theme, widget};
@@ -280,8 +279,6 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions
     };
 
-    let logind_available = cfg!(feature = "logind") && crate::logind::is_available();
-
     let flags = Flags {
         user_icons: user_datas
             .iter_mut()
@@ -291,7 +288,10 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions,
         greeter_config,
         greeter_config_handler,
-        logind_available,
+        #[cfg(feature = "logind")]
+        logind_available: crate::logind::is_available(),
+        #[cfg(not(feature = "logind"))]
+        logind_available: false,
     };
 
     let settings = Settings::default().no_main_window(true);
@@ -363,6 +363,9 @@ pub enum Message {
     Common(common::Message),
     OutputEvent(OutputEvent, WlOutput),
     Auth(Option<String>),
+    /// Non-fatal error message from PAM (`PAM_ERROR_MSG`), reported by greetd as an auth
+    /// message of type `Error`. Unlike [`Message::Error`] the conversation stays alive.
+    AuthError(String),
     ConfigUpdateUser,
     DialogCancel,
     DialogConfirm,
@@ -386,7 +389,7 @@ pub enum Message {
     Session(String),
     Shutdown,
     Socket(SocketState),
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
     Suspend,
     Username(String),
     EnterUser(bool, String),
@@ -1178,6 +1181,12 @@ impl cosmic::Application for App {
     fn update(&mut self, message: Self::Message) -> Task<Message> {
         match message {
             Message::Common(common_message) => {
+                if matches!(&common_message, common::Message::Prompt(_, _, Some(_)))
+                    && self.authenticating
+                {
+                    self.authenticating = false;
+                    self.common.prompt_opt = None;
+                }
                 // In greetd's IPC protocol, the greeter must acknowledge auth messages by
                 // sending PostAuthMessageResponse. For non-interactive "info" messages
                 // (fingerprint prompts typically come through here), the correct response
@@ -1300,9 +1309,7 @@ impl cosmic::Application for App {
                                 exclusive_zone: -1,
                                 size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
                             }),
-                            cosmic::task::message(cosmic::Action::Cosmic(
-                                cosmic::app::Action::Surface(msg),
-                            )),
+                            cosmic::task::message(cosmic::Action::Surface(msg)),
                         ]);
                     }
                     OutputEvent::Removed => {
@@ -1493,6 +1500,13 @@ impl cosmic::Application for App {
                 self.authenticating = true;
                 self.send_request(Request::PostAuthMessageResponse { response });
             }
+            Message::AuthError(error) => {
+                // The conversation continues, so acknowledge like any other
+                // non-interactive auth message rather than cancelling the session.
+                self.common.error_opt = Some(error);
+                self.authenticating = false;
+                self.send_request(Request::PostAuthMessageResponse { response: None });
+            }
             Message::Login => {
                 self.common.prompt_opt = None;
                 self.common.error_opt = None;
@@ -1643,9 +1657,7 @@ impl cosmic::Application for App {
                 self.greetd_sender = Some(sender);
             }
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
             Message::ScreenReader(enabled) => {
                 if enabled
