@@ -38,6 +38,12 @@ use wayland_client::protocol::wl_output::WlOutput;
 use crate::common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT, MAX_WIDTH};
 use crate::fl;
 
+/// Minimum time duration of a PAM attempt.
+///
+/// If a failed PAM attempt takes less time than this, wait out the rest of
+/// this duration before retrying.
+const PAM_MIN_ATTEMPT_DURATION: Duration = Duration::from_millis(500);
+
 fn lockfile_opt() -> Option<PathBuf> {
     let runtime_dir = dirs::runtime_dir()?;
     let session_id = env::var("XDG_SESSION_ID").ok()?;
@@ -599,7 +605,7 @@ impl App {
                         widget::row::with_capacity(2)
                             .spacing(8.0)
                             .align_y(Alignment::Center)
-                            .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
+                            .push(widget::indeterminate_circular().size(16.0))
                             .push(widget::text(fl!("authenticating"))),
                     )
                     .width(Length::Fill)
@@ -935,6 +941,7 @@ impl cosmic::Application for App {
 
                                 let pam_future = async {
                                     loop {
+                                        let attempt_start = tokio::time::Instant::now();
                                         let (value_tx, value_rx) = mpsc::channel(16);
                                         msg_tx
                                             .send(cosmic::Action::App(Message::Channel(value_tx)))
@@ -973,6 +980,9 @@ impl cosmic::Application for App {
                                                     .unwrap();
                                             }
                                         }
+
+                                        let retry_at = attempt_start + PAM_MIN_ATTEMPT_DURATION;
+                                        tokio::time::sleep_until(retry_at).await;
                                     }
                                 };
 
@@ -1053,7 +1063,7 @@ impl cosmic::Application for App {
                     self.state = State::Unlocked;
 
                     let mut commands = Vec::new();
-                    for (_output, surface_id) in self.common.surface_ids.iter() {
+                    for surface_id in self.common.surface_ids.values() {
                         self.common.surface_names.remove(surface_id);
                         self.common.window_size.remove(surface_id);
                         commands.push(destroy_lock_surface(*surface_id));
@@ -1185,7 +1195,7 @@ impl cosmic::Application for App {
                         // Destroy lock surfaces
                         let mut commands = Vec::with_capacity(self.common.surface_ids.len() + 1);
 
-                        for (_output, surface_id) in self.common.surface_ids.iter() {
+                        for surface_id in self.common.surface_ids.values() {
                             self.common.surface_names.remove(surface_id);
                             self.common.window_size.remove(surface_id);
                             commands.push(destroy_lock_surface(*surface_id));
